@@ -9,7 +9,7 @@ import {
 import { cn, formatCurrency } from "@/lib/utils";
 import { useStore, store } from "@/lib/store";
 import { Modal, Button, Input, Select } from "@/components/ui/index";
-import { DogDB, TutorDB, useDB } from "@/lib/db";
+import { AppointmentDB, DogDB, HotelDB, TutorDB, useDB } from "@/lib/db";
 
 // ─── Shared field row ─────────────────────────────────────────────────────────
 function FieldRow({ children, cols = 2 }: { children: React.ReactNode; cols?: 1 | 2 | 3 }) {
@@ -435,24 +435,67 @@ function ModalNovaReserva({ onClose }: { onClose: () => void }) {
   const submit = () => {
     if (!form.dogId || !form.checkIn || !form.checkOut)
       return store.toast("warning", "Preencha cão, check-in e check-out.");
-    const { HotelDB } = require("@/lib/db");
+
+    const tutorId = dog?.tutorId ?? "";
+
+    // 1. Criar a reserva no hotel
     HotelDB.create({
-      dogId:          form.dogId,
-      tutorId:        dog?.tutorId ?? "",
-      roomType:       "standard",
-      checkIn:        form.checkIn,
-      checkOut:       form.checkOut,
-      status:         "reservado",
-      food:           form.food,
-      medications:    form.medications || undefined,
-      allergyAlert:   form.allergyAlert || undefined,
-      belongingsList: form.belongingsList.filter(b => b.trim()),
-      isSchoolStudent:form.isSchoolStudent,
-      exitBath:       form.exitBath,
-      notes:          form.notes,
-      price:          total,
+      dogId:           form.dogId,
+      tutorId,
+      roomType:        "standard",
+      checkIn:         form.checkIn,
+      checkOut:        form.checkOut,
+      status:          "reservado",
+      food:            form.food,
+      medications:     form.medications || undefined,
+      allergyAlert:    form.allergyAlert || undefined,
+      belongingsList:  form.belongingsList.filter(b => b.trim()),
+      isSchoolStudent: form.isSchoolStudent,
+      exitBath:        form.exitBath,
+      notes:           form.notes,
+      price:           total,
     });
-    store.toast("success", `Reserva criada — ${dog?.name}, ${nights} noite${nights !== 1 ? "s" : ""} · ${formatCurrency(total)}`);
+
+    // 2. Criar agendamento de check-in na Agenda
+    AppointmentDB.create({
+      dogId:       form.dogId,
+      tutorId,
+      serviceType: "hotel",
+      date:        form.checkIn,
+      startTime:   "08:00",
+      endTime:     "09:00",
+      status:      "agendado",
+      price:       total,
+      notes:       `Check-in hotel · ${nights} noite${nights !== 1 ? "s" : ""}${form.notes ? ` · ${form.notes}` : ""}`,
+    });
+
+    // 3. Criar agendamento de check-out na Agenda
+    AppointmentDB.create({
+      dogId:       form.dogId,
+      tutorId,
+      serviceType: "hotel",
+      date:        form.checkOut,
+      startTime:   "12:00",
+      endTime:     "13:00",
+      status:      "agendado",
+      notes:       `Check-out hotel · ${dog?.name}`,
+    });
+
+    // 4. Se solicitou banho de saída, criar agendamento de banho no dia do check-out
+    if (form.exitBath) {
+      AppointmentDB.create({
+        dogId:       form.dogId,
+        tutorId,
+        serviceType: "banho",
+        date:        form.checkOut,
+        startTime:   "09:00",
+        endTime:     "10:30",
+        status:      "agendado",
+        notes:       `Banho de saída — hotel · ${dog?.name}`,
+      });
+    }
+
+    store.toast("success", `Reserva confirmada — ${dog?.name}, ${nights} noite${nights !== 1 ? "s" : ""} · ${formatCurrency(total)}. Check-in e check-out adicionados à Agenda.`);
     onClose();
   };
 
