@@ -133,7 +133,7 @@ function CheckInModal({ apt, onClose }: { apt: Appointment; onClose: () => void 
           status: "concluido",
           checkoutTime: nowTime(),
           checkoutObs: observations || undefined,
-          checkoutEmotionalState: emotionalState,
+          checkoutEmotionalState: emotionalState as Appointment["checkoutEmotionalState"],
         });
         if (plan && !planExhausted) {
           PlanDB.update(plan.id, { usedUses: (plan.usedUses ?? 0) + 1 });
@@ -149,7 +149,7 @@ function CheckInModal({ apt, onClose }: { apt: Appointment; onClose: () => void 
           status: "em_andamento",
           checkinTime: nowTime(),
           checkinObs: observations || undefined,
-          checkinEmotionalState: emotionalState,
+          checkinEmotionalState: emotionalState as Appointment["checkinEmotionalState"],
         });
         // Update hotel reservation to hospedado
         if (hotelRes && hotelRes.status === "reservado") {
