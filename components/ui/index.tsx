@@ -379,11 +379,12 @@ export function Modal({ open, onClose, title, description, children, size = "md"
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
       <div className={cn(
-        "relative bg-white rounded-xl shadow-float w-full animate-scale-in",
+        "relative bg-white rounded-xl shadow-float w-full animate-scale-in flex flex-col",
+        "max-h-[90vh]",
         sizes[size]
       )}>
         {(title || description) && (
-          <div className="flex items-start justify-between p-6 pb-4 border-b border-gray-100">
+          <div className="flex items-start justify-between p-6 pb-4 border-b border-gray-100 flex-shrink-0">
             <div>
               {title && <h2 className="text-lg font-semibold text-gray-900">{title}</h2>}
               {description && <p className="text-sm text-gray-500 mt-0.5">{description}</p>}
@@ -395,8 +396,12 @@ export function Modal({ open, onClose, title, description, children, size = "md"
             </button>
           </div>
         )}
-        <div className="p-6">{children}</div>
-        {footer && <div className="px-6 pb-6 flex justify-end gap-3 border-t border-gray-100 pt-4">{footer}</div>}
+        <div className="p-6 overflow-y-auto flex-1">{children}</div>
+        {footer && (
+          <div className="px-6 pb-6 pt-4 flex justify-end gap-3 border-t border-gray-100 flex-shrink-0 bg-white rounded-b-xl">
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );
