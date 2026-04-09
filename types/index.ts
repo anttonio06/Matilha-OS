@@ -97,6 +97,13 @@ export interface Appointment {
   notes?: string;
   observations?: string;
   createdAt: string;
+  // Check-in / Check-out fields (set at runtime)
+  checkinTime?: string;
+  checkinObs?: string;
+  checkinEmotionalState?: string;
+  checkoutTime?: string;
+  checkoutObs?: string;
+  checkoutEmotionalState?: string;
 }
 
 // ─── Check-in / Check-out ────────────────────────────────────────────────────

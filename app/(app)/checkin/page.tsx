@@ -1,17 +1,29 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import {
   Search, LogIn, LogOut, Clock, AlertTriangle, CheckCircle,
-  Dog, ChevronRight, Phone, Syringe, Package, Bell, Star,
-  Square, SquareCheck,
+  Dog, ChevronRight, Phone, Syringe, Package, Bell,
+  Square, SquareCheck, ShieldAlert, CreditCard,
 } from "lucide-react";
 import { store } from "@/lib/store";
-import { cn } from "@/lib/utils";
-import { todayAppointments, dogById, tutorById, planById, alerts } from "@/lib/mock-data";
-import { useDB, HotelDB } from "@/lib/db";
+import { cn, formatCurrency } from "@/lib/utils";
+import {
+  useDB, KEYS,
+  AppointmentDB, DogDB, TutorDB, PlanDB, AlertDB, HotelDB,
+} from "@/lib/db";
 import { Badge, Button, Card, Input, Modal, AlertStrip } from "@/components/ui";
 import type { Appointment } from "@/types";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function nowTime() {
+  return new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+function todayStr() {
+  return new Date().toISOString().split("T")[0];
+}
 
 // ─── Belongings Checklist Modal ───────────────────────────────────────────────
 
@@ -82,32 +94,79 @@ function BelongingsModal({ dogName, items, onClose }: {
   );
 }
 
-// ─── Check-in Modal ───────────────────────────────────────────────────────────
+// ─── Check-in / Check-out Modal ───────────────────────────────────────────────
 
 function CheckInModal({ apt, onClose }: { apt: Appointment; onClose: () => void }) {
-  const dog   = dogById(apt.dogId);
-  const tutor = tutorById(apt.tutorId);
-  const plan  = apt.planId ? planById(apt.planId) : null;
-  const [step, setStep]          = useState<"review"|"details"|"done">("review");
+  const dog   = DogDB.get(apt.dogId);
+  const tutor = TutorDB.get(apt.tutorId);
+  const plan  = apt.planId ? PlanDB.get(apt.planId) : null;
+
+  const [step, setStep]          = useState<"review" | "details" | "done">("review");
   const [emotionalState, setEmo] = useState("calmo");
   const [observations, setObs]   = useState("");
-  const [tutorMessage, setMsg]   = useState("");
+  const [loading, setLoading]    = useState(false);
 
-  // Hotel reservation with belongings
-  const hotelReservations = useDB(() => HotelDB.list());
+  const isCheckout = apt.status === "em_andamento";
+
+  // Hotel reservation
+  const hotelReservations = useDB(() => HotelDB.list(), KEYS.hotel);
   const hotelRes = apt.serviceType === "hotel"
     ? hotelReservations.find(r => r.dogId === apt.dogId && r.status !== "cancelado" && r.status !== "checkout")
     : null;
   const belongingsList = hotelRes?.belongingsList ?? (hotelRes?.belongings ? [hotelRes.belongings] : []);
 
-  const dogAlerts = alerts.filter(a => a.entityId === apt.dogId || a.entityId === apt.tutorId);
+  // Alerts for this dog/tutor
+  const dogAlerts = AlertDB.active().filter(a => a.entityId === apt.dogId || a.entityId === apt.tutorId);
 
-  const isCheckout = apt.status === "em_andamento" || apt.status === "concluido";
+  // Plan validation
+  const planExhausted = plan && plan.totalUses != null && (plan.usedUses ?? 0) >= plan.totalUses;
+  const planExpired   = plan && plan.validUntil && plan.validUntil < todayStr();
+  const planOk        = plan && !planExhausted && !planExpired;
+  const usesLeft      = plan?.totalUses != null ? (plan.totalUses - (plan.usedUses ?? 0)) : null;
+
+  const confirmAction = useCallback(() => {
+    setLoading(true);
+    try {
+      if (isCheckout) {
+        // Check-out: mark concluido + record time + deduct plan use
+        AppointmentDB.update(apt.id, {
+          status: "concluido",
+          checkoutTime: nowTime(),
+          checkoutObs: observations || undefined,
+          checkoutEmotionalState: emotionalState,
+        });
+        if (plan && !planExhausted) {
+          PlanDB.update(plan.id, { usedUses: (plan.usedUses ?? 0) + 1 });
+        }
+        // Update hotel reservation to checkout status
+        if (hotelRes) {
+          HotelDB.update(hotelRes.id, { status: "checkout" });
+        }
+        store.toast("success", `Check-out confirmado — ${dog?.name}`);
+      } else {
+        // Check-in: mark em_andamento + record time
+        AppointmentDB.update(apt.id, {
+          status: "em_andamento",
+          checkinTime: nowTime(),
+          checkinObs: observations || undefined,
+          checkinEmotionalState: emotionalState,
+        });
+        // Update hotel reservation to hospedado
+        if (hotelRes && hotelRes.status === "reservado") {
+          HotelDB.update(hotelRes.id, { status: "hospedado" });
+        }
+        store.toast("success", `Check-in confirmado — ${dog?.name}`);
+      }
+      setStep("done");
+    } finally {
+      setLoading(false);
+    }
+  }, [apt.id, isCheckout, plan, planExhausted, hotelRes, dog?.name, observations, emotionalState]);
 
   return (
     <Modal open onClose={onClose} size="lg"
       title={isCheckout ? `Check-out — ${dog?.name}` : `Check-in — ${dog?.name}`}
-      description={`${dog?.breed} · ${tutor?.name}`}
+      description={`${dog?.breed ?? ""} · ${tutor?.name ?? ""}`}
       footer={
         step === "review" ? (
           <>
@@ -119,7 +178,7 @@ function CheckInModal({ apt, onClose }: { apt: Appointment; onClose: () => void 
         ) : step === "details" ? (
           <>
             <Button variant="outline" onClick={() => setStep("review")}>Voltar</Button>
-            <Button onClick={() => setStep("done")} icon={<CheckCircle className="w-4 h-4"/>}>
+            <Button onClick={confirmAction} loading={loading} icon={<CheckCircle className="w-4 h-4"/>}>
               {isCheckout ? "Confirmar Check-out" : "Confirmar Check-in"}
             </Button>
           </>
@@ -149,6 +208,48 @@ function CheckInModal({ apt, onClose }: { apt: Appointment; onClose: () => void 
               <p className="text-xs text-gray-500 mt-1">📞 {tutor?.whatsapp}</p>
             </div>
           </div>
+
+          {/* Plan status */}
+          {plan ? (
+            <div className={cn(
+              "p-3 rounded-xl border flex items-start gap-3",
+              planExhausted || planExpired
+                ? "bg-red-50 border-red-200"
+                : usesLeft !== null && usesLeft <= 2
+                  ? "bg-amber-50 border-amber-200"
+                  : "bg-green-50 border-green-200"
+            )}>
+              <CreditCard className={cn("w-4 h-4 flex-shrink-0 mt-0.5",
+                planExhausted || planExpired ? "text-red-500" : usesLeft !== null && usesLeft <= 2 ? "text-amber-500" : "text-green-500"
+              )}/>
+              <div className="flex-1 min-w-0">
+                <p className={cn("text-xs font-bold",
+                  planExhausted || planExpired ? "text-red-800" : usesLeft !== null && usesLeft <= 2 ? "text-amber-800" : "text-green-800"
+                )}>{plan.name}</p>
+                {planExpired && <p className="text-xs text-red-700 mt-0.5">Plano expirado em {plan.validUntil}</p>}
+                {planExhausted && <p className="text-xs text-red-700 mt-0.5">Plano esgotado — 0 usos restantes</p>}
+                {planOk && usesLeft !== null && (
+                  <p className="text-xs text-green-700 mt-0.5">
+                    {usesLeft} uso(s) restante(s)
+                    {isCheckout && " · será deduzido no check-out"}
+                  </p>
+                )}
+                {planOk && usesLeft === null && (
+                  <p className="text-xs text-green-700 mt-0.5">Plano ativo · ilimitado</p>
+                )}
+              </div>
+              {(planExhausted || planExpired) && (
+                <ShieldAlert className="w-4 h-4 text-red-500 flex-shrink-0"/>
+              )}
+            </div>
+          ) : (
+            <div className="p-3 rounded-xl border border-amber-200 bg-amber-50 flex items-center gap-3">
+              <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0"/>
+              <p className="text-xs text-amber-800 font-medium">
+                Sem plano associado — cobrança avulsa ou manual.
+              </p>
+            </div>
+          )}
 
           {/* System alerts */}
           {dogAlerts.length > 0 && (
@@ -203,11 +304,10 @@ function CheckInModal({ apt, onClose }: { apt: Appointment; onClose: () => void 
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3 rounded-xl border border-gray-100 bg-gray-50">
               <p className="text-2xs font-bold uppercase tracking-wide text-gray-400 mb-1">Serviço</p>
-              <p className="text-sm font-semibold text-gray-900 capitalize">{apt.serviceType.replace("_"," ")}</p>
-              {plan && <p className="text-xs text-forest-600 mt-0.5">{plan.name} · {plan.usedUses}/{plan.totalUses} usos</p>}
+              <p className="text-sm font-semibold text-gray-900 capitalize">{apt.serviceType.replace("_", " ")}</p>
             </div>
             <div className="p-3 rounded-xl border border-gray-100 bg-gray-50">
-              <p className="text-2xs font-bold uppercase tracking-wide text-gray-400 mb-1">Horário</p>
+              <p className="text-2xs font-bold uppercase tracking-wide text-gray-400 mb-1">Horário previsto</p>
               <p className="text-sm font-semibold text-gray-900">
                 {apt.startTime}{apt.endTime ? ` – ${apt.endTime}` : ""}
               </p>
@@ -234,11 +334,11 @@ function CheckInModal({ apt, onClose }: { apt: Appointment; onClose: () => void 
             </label>
             <div className="grid grid-cols-5 gap-2">
               {[
-                { v:"calmo",    label:"Calmo",   emoji:"😌" },
-                { v:"ansioso",  label:"Ansioso", emoji:"😰" },
-                { v:"excitado", label:"Animado", emoji:"🤩" },
-                { v:"agitado",  label:"Agitado", emoji:"😤" },
-                { v:"agressivo",label:"Reativo", emoji:"😠" },
+                { v: "calmo",     label: "Calmo",   emoji: "😌" },
+                { v: "ansioso",   label: "Ansioso", emoji: "😰" },
+                { v: "excitado",  label: "Animado", emoji: "🤩" },
+                { v: "agitado",   label: "Agitado", emoji: "😤" },
+                { v: "agressivo", label: "Reativo", emoji: "😠" },
               ].map(({ v, label, emoji }) => (
                 <button key={v} onClick={() => setEmo(v)}
                   className={cn(
@@ -254,15 +354,29 @@ function CheckInModal({ apt, onClose }: { apt: Appointment; onClose: () => void 
             </div>
           </div>
 
-          <Input label="Observações do monitor"
-            placeholder="O que a equipe precisa saber?"
-            value={observations} onChange={e => setObs(e.target.value)}/>
+          <div>
+            <label className="text-xs font-semibold text-gray-600 mb-1.5 block">Observações do monitor</label>
+            <textarea
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm text-gray-900 resize-none focus:outline-none focus:ring-2 focus:ring-forest-500/30 focus:border-forest-400"
+              rows={3}
+              placeholder="O que a equipe precisa saber?"
+              value={observations}
+              onChange={e => setObs(e.target.value)}
+            />
+          </div>
 
-          <Input label="Recado do tutor"
-            placeholder="Instrução especial do responsável..."
-            value={tutorMessage} onChange={e => setMsg(e.target.value)}/>
+          {/* Checkout: plan deduction warning */}
+          {isCheckout && plan && !planExhausted && usesLeft !== null && (
+            <div className="p-3 rounded-xl border border-blue-200 bg-blue-50 flex items-center gap-3">
+              <CreditCard className="w-4 h-4 text-blue-500 flex-shrink-0"/>
+              <p className="text-xs text-blue-800 font-medium">
+                Ao confirmar, 1 uso será debitado do plano <strong>{plan.name}</strong>.
+                {usesLeft === 1 && " Este é o último uso — considere renovação."}
+              </p>
+            </div>
+          )}
 
-          {/* Belongings checklist shortcut for hotel checkout */}
+          {/* Hotel belongings reminder */}
           {hotelRes && belongingsList.length > 0 && (
             <div className="p-3 rounded-xl border-2 border-amber-300 bg-amber-50 flex items-center gap-3">
               <Package className="w-5 h-5 text-amber-600 flex-shrink-0"/>
@@ -270,11 +384,6 @@ function CheckInModal({ apt, onClose }: { apt: Appointment; onClose: () => void 
                 <p className="text-xs font-bold text-amber-800">Pertences ({belongingsList.length} itens)</p>
                 <p className="text-xs text-amber-700">Confira a lista antes de liberar o check-out</p>
               </div>
-              <button
-                onClick={() => store.toast("info","Abra a lista de pertences no painel do Hotel.")}
-                className="text-xs font-bold text-amber-700 hover:underline whitespace-nowrap">
-                Ver lista →
-              </button>
             </div>
           )}
 
@@ -299,9 +408,19 @@ function CheckInModal({ apt, onClose }: { apt: Appointment; onClose: () => void 
               {isCheckout ? "Check-out confirmado!" : "Check-in confirmado!"}
             </h3>
             <p className="text-sm text-gray-500 mt-1">
-              {dog?.name} às {new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
+              {dog?.name} às {nowTime()}
             </p>
           </div>
+
+          {/* Plan deduction confirmation */}
+          {isCheckout && plan && !planExhausted && usesLeft !== null && (
+            <div className="w-full p-3 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-3">
+              <CreditCard className="w-4 h-4 text-blue-500 flex-shrink-0"/>
+              <p className="text-xs text-blue-800 font-medium">
+                1 uso debitado do plano {plan.name} · {Math.max(0, usesLeft - 1)} restante(s)
+              </p>
+            </div>
+          )}
 
           {/* Hotel checkout: final belongings reminder */}
           {isCheckout && belongingsList.length > 0 && (
@@ -320,16 +439,17 @@ function CheckInModal({ apt, onClose }: { apt: Appointment; onClose: () => void 
             </div>
           )}
 
-          {plan && (plan.usedUses ?? 0) + 1 >= (plan.totalUses ?? 99) - 2 && (
+          {/* Near-limit plan alert */}
+          {plan && usesLeft !== null && usesLeft <= 2 && (
             <AlertStrip type="opportunity"
-              title="Plano quase no limite"
-              description={`Após este uso, restará apenas ${(plan.totalUses ?? 0) - (plan.usedUses ?? 0) - 1} uso(s). Considere acionar a renovação.`}
+              title={usesLeft <= 1 ? "Plano esgotado após este uso" : "Plano quase no limite"}
+              description={`Restam ${Math.max(0, usesLeft - (isCheckout ? 1 : 0))} uso(s). Considere renovação.`}
             />
           )}
 
           <div className="flex gap-2">
             <Button variant="outline" icon={<Phone className="w-4 h-4"/>}
-              onClick={() => store.openModal("enviar_mensagem")}>
+              onClick={() => store.openModal("enviar_mensagem", { tutorId: apt.tutorId })}>
               Notificar tutor
             </Button>
           </div>
@@ -341,32 +461,35 @@ function CheckInModal({ apt, onClose }: { apt: Appointment; onClose: () => void 
 
 // ─── Appointment Card ─────────────────────────────────────────────────────────
 
-function AptCard({ apt, type }: { apt: Appointment; type: "checkin"|"checkout" }) {
-  const dog   = dogById(apt.dogId);
-  const tutor = tutorById(apt.tutorId);
-  const plan  = apt.planId ? planById(apt.planId) : null;
+function AptCard({ apt, type }: { apt: Appointment; type: "checkin" | "checkout" }) {
+  const dog   = DogDB.get(apt.dogId);
+  const tutor = TutorDB.get(apt.tutorId);
+  const plan  = apt.planId ? PlanDB.get(apt.planId) : null;
   const [modalOpen, setModalOpen] = useState(false);
+  const [showBelongings, setShowBelongings] = useState(false);
 
-  const hotelReservations = useDB(() => HotelDB.list());
+  const hotelReservations = useDB(() => HotelDB.list(), KEYS.hotel);
   const hotelRes = apt.serviceType === "hotel"
     ? hotelReservations.find(r => r.dogId === apt.dogId && r.status !== "cancelado")
     : null;
-  const hasBelongings = hotelRes && (hotelRes.belongings || (hotelRes.belongingsList && hotelRes.belongingsList.length > 0));
-  const [showBelongings, setShowBelongings] = useState(false);
+  const belongingsList = hotelRes?.belongingsList ?? (hotelRes?.belongings ? [hotelRes.belongings] : []);
+  const hasBelongings = type === "checkout" && belongingsList.length > 0;
+
+  const usesLeft = plan?.totalUses != null ? (plan.totalUses - (plan.usedUses ?? 0)) : null;
+  const planAlert = plan && (
+    (plan.validUntil && plan.validUntil < todayStr()) ||
+    (usesLeft !== null && usesLeft <= 0)
+  );
 
   const svcColors: Record<string, string> = {
-    creche:"bg-forest-100 text-forest-700", banho:"bg-blue-100 text-blue-700",
-    banho_tosa:"bg-purple-100 text-purple-700", hotel:"bg-amber-100 text-amber-700",
-    escola:"bg-rose-100 text-rose-700",
+    creche: "bg-forest-100 text-forest-700", banho: "bg-blue-100 text-blue-700",
+    banho_tosa: "bg-purple-100 text-purple-700", hotel: "bg-amber-100 text-amber-700",
+    escola: "bg-rose-100 text-rose-700",
   };
-
-  const belongingsList = hotelRes?.belongingsList ??
-    (hotelRes?.belongings ? [hotelRes.belongings] : []);
 
   return (
     <>
       <Card hover className="flex flex-col gap-3">
-        {/* Main row — clickable */}
         <div className="flex items-start gap-3 cursor-pointer" onClick={() => setModalOpen(true)}>
           <div className="w-10 h-10 rounded-full bg-forest-100 flex items-center justify-center flex-shrink-0">
             <span className="text-base font-bold text-forest-700">{dog?.name[0]}</span>
@@ -375,9 +498,11 @@ function AptCard({ apt, type }: { apt: Appointment; type: "checkin"|"checkout" }
             <div className="flex items-center gap-2 flex-wrap">
               <p className="font-semibold text-gray-900">{dog?.name}</p>
               <span className={cn("badge text-2xs", svcColors[apt.serviceType] ?? "bg-gray-100 text-gray-600")}>
-                {apt.serviceType.replace("_"," ")}
+                {apt.serviceType.replace("_", " ")}
               </span>
-              {plan && <Badge variant="green" size="sm">Plano</Badge>}
+              {plan && !planAlert && <Badge variant="green" size="sm">Plano</Badge>}
+              {planAlert && <Badge variant="red" size="sm">Plano inválido</Badge>}
+              {!plan && <Badge variant="amber" size="sm">Avulso</Badge>}
             </div>
             <p className="text-xs text-gray-500 mt-0.5">{tutor?.name} · {tutor?.phone}</p>
             <div className="flex items-center gap-3 mt-1.5">
@@ -395,13 +520,17 @@ function AptCard({ apt, type }: { apt: Appointment; type: "checkin"|"checkout" }
                   <Syringe className="w-3 h-3"/> Medicação
                 </span>
               )}
+              {plan && usesLeft !== null && usesLeft <= 2 && usesLeft > 0 && (
+                <span className="flex items-center gap-1 text-xs text-amber-600">
+                  <CreditCard className="w-3 h-3"/> {usesLeft} uso(s) restante(s)
+                </span>
+              )}
             </div>
           </div>
           <ChevronRight className="w-4 h-4 text-gray-300 mt-1 flex-shrink-0"/>
         </div>
 
-        {/* Hotel checkout: belongings CTA */}
-        {type === "checkout" && hasBelongings && (
+        {hasBelongings && (
           <button onClick={() => setShowBelongings(true)}
             className="flex items-center gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 hover:bg-amber-100 transition-colors text-left">
             <Package className="w-4 h-4 text-amber-500 flex-shrink-0"/>
@@ -410,7 +539,7 @@ function AptCard({ apt, type }: { apt: Appointment; type: "checkin"|"checkout" }
                 {belongingsList.length} item(s) para devolver
               </p>
               <p className="text-2xs text-amber-600 truncate">
-                {belongingsList.slice(0,2).join(", ")}{belongingsList.length > 2 ? "..." : ""}
+                {belongingsList.slice(0, 2).join(", ")}{belongingsList.length > 2 ? "..." : ""}
               </p>
             </div>
             <span className="text-xs font-bold text-amber-700 whitespace-nowrap">Conferir →</span>
@@ -434,19 +563,24 @@ function AptCard({ apt, type }: { apt: Appointment; type: "checkin"|"checkout" }
 
 export default function CheckInPage() {
   const [search, setSearch] = useState("");
-  const [tab, setTab]       = useState<"chegadas"|"presentes"|"saidas">("chegadas");
+  const [tab, setTab]       = useState<"chegadas" | "presentes" | "saidas">("chegadas");
 
-  const pendingCheckIns = todayAppointments.filter(a => a.status === "agendado" || a.status === "confirmado");
-  const active          = todayAppointments.filter(a => a.status === "em_andamento");
-  const done            = todayAppointments.filter(a => a.status === "concluido");
+  const todayApts = useDB(() => AppointmentDB.today(), KEYS.appointments);
 
-  const filtered = (list: typeof todayAppointments) =>
+  const pendingCheckIns = todayApts.filter(a => a.status === "agendado" || a.status === "confirmado");
+  const active          = todayApts.filter(a => a.status === "em_andamento");
+  const done            = todayApts.filter(a => a.status === "concluido");
+
+  const filtered = (list: Appointment[]) =>
     search ? list.filter(a => {
-      const dog   = dogById(a.dogId);
-      const tutor = tutorById(a.tutorId);
+      const dog   = DogDB.get(a.dogId);
+      const tutor = TutorDB.get(a.tutorId);
       const q     = search.toLowerCase();
       return dog?.name.toLowerCase().includes(q) || tutor?.name.toLowerCase().includes(q);
     }) : list;
+
+  const current = tab === "chegadas" ? pendingCheckIns : tab === "presentes" ? active : done;
+  const filteredCurrent = filtered(current);
 
   return (
     <div className="p-6 space-y-6 max-w-[1200px]">
@@ -455,7 +589,7 @@ export default function CheckInPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Check-in / Check-out</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Recepção operacional · {new Date().toLocaleDateString("pt-BR",{weekday:"long", day:"numeric", month:"long"})}
+            Recepção operacional · {new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -470,17 +604,19 @@ export default function CheckInPage() {
         </div>
       </div>
 
-      {/* Stat cards / tabs */}
+      {/* Tabs */}
       <div className="grid grid-cols-3 gap-4">
         {[
-          { key:"chegadas",  icon:<LogIn className="w-4 h-4 text-forest-600"/>,  label:"Check-ins pendentes", value:pendingCheckIns.length, color:"forest" },
-          { key:"presentes", icon:<Dog className="w-4 h-4 text-blue-600"/>,      label:"Presentes agora",     value:active.length,          color:"blue"   },
-          { key:"saidas",    icon:<LogOut className="w-4 h-4 text-amber-600"/>,  label:"Saídas (concluídos)", value:done.length,            color:"amber"  },
+          { key: "chegadas",  icon: <LogIn className="w-4 h-4 text-forest-600"/>,  label: "Check-ins pendentes", value: pendingCheckIns.length },
+          { key: "presentes", icon: <Dog className="w-4 h-4 text-blue-600"/>,      label: "Presentes agora",     value: active.length          },
+          { key: "saidas",    icon: <LogOut className="w-4 h-4 text-amber-600"/>,  label: "Saídas (concluídos)", value: done.length             },
         ].map(({ key, icon, label, value }) => (
           <div key={key}
             className={cn(
               "p-4 rounded-xl border-2 cursor-pointer transition-all",
-              tab === key ? "border-forest-500 bg-forest-50 shadow-sm" : "border-transparent bg-white border border-gray-200 hover:border-gray-300"
+              tab === key
+                ? "border-forest-500 bg-forest-50 shadow-sm"
+                : "border-transparent bg-white border border-gray-200 hover:border-gray-300"
             )}
             onClick={() => setTab(key as typeof tab)}>
             <div className="flex items-center gap-2 mb-1">{icon}<p className="text-xs font-semibold text-gray-600">{label}</p></div>
@@ -492,25 +628,26 @@ export default function CheckInPage() {
       {/* List */}
       <div>
         <h2 className="text-sm font-bold text-gray-800 mb-4">
-          {tab === "chegadas"  && `Aguardando check-in (${filtered(pendingCheckIns).length})`}
-          {tab === "presentes" && `Presentes agora (${filtered(active).length})`}
-          {tab === "saidas"    && `Saídas do dia (${filtered(done).length})`}
+          {tab === "chegadas"  && `Aguardando check-in (${filteredCurrent.length})`}
+          {tab === "presentes" && `Presentes agora (${filteredCurrent.length})`}
+          {tab === "saidas"    && `Saídas do dia (${filteredCurrent.length})`}
         </h2>
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {(tab === "chegadas" ? filtered(pendingCheckIns) :
-            tab === "presentes" ? filtered(active) :
-            filtered(done)
-          ).map(apt => (
+          {filteredCurrent.map(apt => (
             <AptCard key={apt.id} apt={apt} type={tab === "saidas" ? "checkout" : "checkin"}/>
           ))}
 
-          {filtered(
-            tab === "chegadas" ? pendingCheckIns : tab === "presentes" ? active : done
-          ).length === 0 && (
+          {filteredCurrent.length === 0 && (
             <div className="col-span-full flex flex-col items-center gap-3 py-16 text-gray-400">
               <Dog className="w-12 h-12 opacity-20"/>
               <p className="text-sm font-medium">Nenhum registro nesta categoria</p>
+              {tab === "chegadas" && (
+                <button onClick={() => store.openModal("novo_agendamento")}
+                  className="text-xs text-forest-600 font-semibold hover:underline">
+                  + Criar agendamento
+                </button>
+              )}
             </div>
           )}
         </div>
