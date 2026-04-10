@@ -7,7 +7,7 @@ import {
   Scissors, GraduationCap, Shield, ShoppingBag, Dog,
 } from "lucide-react";
 import { cn, formatCurrency, percentage } from "@/lib/utils";
-import { team } from "@/lib/mock-data";
+import { TeamDB, useDB, KEYS } from "@/lib/db";
 import { store } from "@/lib/store";
 import { Badge, Button, Card, Input, StatCard, Tabs } from "@/components/ui";
 import type { TeamMember } from "@/types";
@@ -167,6 +167,7 @@ function MemberCard({ member }: { member: TeamMember }) {
 }
 
 export default function EquipePage() {
+  const team = useDB(() => TeamDB.list(), KEYS.team);
   const [tab, setTab] = useState<"membros" | "permissoes" | "comissoes">("membros");
   const [search, setSearch] = useState("");
 

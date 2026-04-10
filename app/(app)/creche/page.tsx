@@ -7,8 +7,7 @@ import {
 } from "lucide-react";
 import { store } from "@/lib/store";
 import { cn, percentage } from "@/lib/utils";
-import { daycareGroups, todayAppointments, dogById, tutorById } from "@/lib/mock-data";
-import { useDB, DogDB } from "@/lib/db";
+import { AppointmentDB, AlertDB, DogDB, GroupDB, TutorDB, useDB, KEYS } from "@/lib/db";
 import { Badge, Button, Card, Progress, StatCard, Tabs, Modal, Input } from "@/components/ui";
 import type { Occurrence } from "@/types";
 
@@ -85,6 +84,18 @@ function OccurrenceModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
       time:        form.time,
       resolved:    form.resolved,
     });
+
+    // Persist high-severity occurrences as AlertDB entries
+    if (form.severity === "alta") {
+      AlertDB.create({
+        type:        "critical",
+        title:       `Ocorrência alta — ${dog?.name ?? "cão"}`,
+        description: form.description,
+        entityId:    form.dogId,
+        entityType:  "dog",
+        actionLabel: "Ver Creche",
+      });
+    }
 
     store.toast("success", `Ocorrência registrada — ${dog?.name}`);
     onSaved();
@@ -265,14 +276,20 @@ function OccurrenceCard({ occ, dogs }: { occ: Occurrence; dogs: ReturnType<typeo
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CrechePage() {
-  const dogs = useDB(() => DogDB.list());
+  const dogs          = useDB(() => DogDB.list(),          KEYS.dogs);
+  const tutors        = useDB(() => TutorDB.list(),        KEYS.tutors);
+  const daycareGroups = useDB(() => GroupDB.list(),        KEYS.groups);
+  const allApts       = useDB(() => AppointmentDB.today(), KEYS.appointments);
   const [tab, setTab]             = useState<"presenca"|"grupos"|"ocorrencias">("presenca");
   const [showOccModal, setOccModal] = useState(false);
   const [occurrences, setOccurrences] = useState<Occurrence[]>(loadOccurrences);
 
   const refreshOccs = () => setOccurrences(loadOccurrences());
 
-  const daycareApts = todayAppointments.filter(a => a.serviceType === "creche");
+  const dogById   = (id: string) => dogs.find(d => d.id === id);
+  const tutorById = (id: string) => tutors.find(t => t.id === id);
+
+  const daycareApts = allApts.filter(a => a.serviceType === "creche");
   const present     = daycareApts.filter(a => a.status === "em_andamento");
   const todayOccs   = occurrences.filter(o => o.date === new Date().toISOString().split("T")[0]);
   const openOccs    = occurrences.filter(o => !o.resolved);

@@ -12,7 +12,8 @@ import {
 } from "recharts";
 import { cn, formatCurrency, percentage } from "@/lib/utils";
 import { store } from "@/lib/store";
-import { revenueChartData, tutors } from "@/lib/mock-data";
+import { TutorDB, useDB, KEYS } from "@/lib/db";
+import { computeRevenueChartData } from "@/lib/services/metrics.service";
 import { Badge, Button, Card, StatCard, Tabs } from "@/components/ui";
 
 const retencaoData = [
@@ -61,6 +62,8 @@ const reportList = [
 ];
 
 export default function RelatoriosPage() {
+  const tutors           = useDB(() => TutorDB.list(), KEYS.tutors);
+  const revenueChartData = computeRevenueChartData();
   const [tab, setTab] = useState<"visao_geral" | "relatorios" | "exportar">("visao_geral");
 
   const last = revenueChartData[revenueChartData.length - 1];

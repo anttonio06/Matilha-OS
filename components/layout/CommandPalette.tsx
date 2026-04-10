@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Search, Dog, Users, CalendarDays, CreditCard, BarChart3, Settings, ShoppingBag, Hotel, Scissors, GraduationCap, LogIn, LayoutDashboard } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { dogs, tutors } from "@/lib/mock-data";
+import { DogDB, TutorDB, useDB, KEYS } from "@/lib/db";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -36,7 +36,9 @@ const commands: Result[] = [
 ];
 
 export function CommandPalette({ open, onClose }: CommandPaletteProps) {
-  const router = useRouter();
+  const router   = useRouter();
+  const dogs     = useDB(() => DogDB.list(),   KEYS.dogs);
+  const tutors   = useDB(() => TutorDB.list(), KEYS.tutors);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
 

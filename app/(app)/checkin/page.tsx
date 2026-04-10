@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   Search, LogIn, LogOut, Clock, AlertTriangle, CheckCircle,
   Dog, ChevronRight, Phone, Syringe, Package, Bell,
@@ -462,6 +463,7 @@ function CheckInModal({ apt, onClose }: { apt: Appointment; onClose: () => void 
 // ─── Appointment Card ─────────────────────────────────────────────────────────
 
 function AptCard({ apt, type }: { apt: Appointment; type: "checkin" | "checkout" }) {
+  const router = useRouter();
   const dog   = DogDB.get(apt.dogId);
   const tutor = TutorDB.get(apt.tutorId);
   const plan  = apt.planId ? PlanDB.get(apt.planId) : null;
@@ -504,7 +506,17 @@ function AptCard({ apt, type }: { apt: Appointment; type: "checkin" | "checkout"
               {planAlert && <Badge variant="red" size="sm">Plano inválido</Badge>}
               {!plan && <Badge variant="amber" size="sm">Avulso</Badge>}
             </div>
-            <p className="text-xs text-gray-500 mt-0.5">{tutor?.name} · {tutor?.phone}</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {tutor ? (
+                <button
+                  className="hover:text-forest-600 hover:underline transition-colors"
+                  onClick={e => { e.stopPropagation(); router.push(`/crm/${tutor.id}`); }}
+                >
+                  {tutor.name}
+                </button>
+              ) : "—"}
+              {tutor?.phone && ` · ${tutor.phone}`}
+            </p>
             <div className="flex items-center gap-3 mt-1.5">
               <span className="flex items-center gap-1 text-xs text-gray-500">
                 <Clock className="w-3 h-3"/>

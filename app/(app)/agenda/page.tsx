@@ -5,9 +5,10 @@ import {
   CalendarDays, ChevronLeft, ChevronRight, Plus, Dog, Scissors,
   Hotel, GraduationCap, AlignLeft, LayoutGrid, AlertTriangle,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { store } from "@/lib/store";
 import { cn } from "@/lib/utils";
-import { useDB, DogDB, TutorDB, AppointmentDB } from "@/lib/db";
+import { useDB, DogDB, TutorDB, AppointmentDB, KEYS } from "@/lib/db";
 import { Button, Card } from "@/components/ui";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -279,10 +280,11 @@ function DayCalendarView({ apts, dogs, tutors }: {
 
 // ─── List View ────────────────────────────────────────────────────────────────
 
-function DayListView({ apts, dogs, tutors }: {
+function DayListView({ apts, dogs, tutors, onNavigate }: {
   apts: ReturnType<typeof AppointmentDB.list>;
   dogs: ReturnType<typeof DogDB.list>;
   tutors: ReturnType<typeof TutorDB.list>;
+  onNavigate: (path: string) => void;
 }) {
   if (apts.length === 0) return (
     <div className="flex flex-col items-center gap-3 py-20 text-gray-400">
@@ -304,15 +306,21 @@ function DayListView({ apts, dogs, tutors }: {
         const st    = STATUS_CFG[apt.status] ?? STATUS_CFG["agendado"];
         const hasAlert = dog?.behavioralRestrictions || dog?.medicalRestrictions;
 
+        // Quick action label based on status
+        const quickAction = apt.status === "agendado"
+          ? { label: "Check-in", path: "/checkin" }
+          : apt.status === "em_andamento"
+          ? { label: "Check-out", path: "/checkin" }
+          : null;
+
         return (
           <div key={apt.id}
             className={cn(
               "flex items-center gap-4 p-4 rounded-xl bg-white border border-gray-100",
-              "border-l-4 hover:shadow-sm transition-all cursor-pointer",
+              "border-l-4 hover:shadow-sm transition-all",
               cfg.border,
               apt.status === "cancelado" ? "opacity-50" : ""
-            )}
-            onClick={() => store.toast("info", `${dog?.name} · ${cfg.label} · ${apt.startTime}`)}>
+            )}>
 
             <div className="w-14 text-right flex-shrink-0">
               <p className="text-sm font-bold text-gray-800 num-display">{apt.startTime}</p>
@@ -325,7 +333,13 @@ function DayListView({ apts, dogs, tutors }: {
 
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <p className="text-sm font-semibold text-gray-900">{dog?.name ?? "—"}</p>
+                {/* Dog name → CRM profile */}
+                <button
+                  className="text-sm font-semibold text-gray-900 hover:text-forest-700 hover:underline transition-colors"
+                  onClick={() => tutor && onNavigate(`/crm/${tutor.id}`)}
+                >
+                  {dog?.name ?? "—"}
+                </button>
                 <span className={cn("text-2xs font-semibold px-2 py-0.5 rounded-full", st.bg, st.text)}>
                   {st.label}
                 </span>
@@ -335,17 +349,35 @@ function DayListView({ apts, dogs, tutors }: {
                 {hasAlert && <AlertTriangle className="w-3.5 h-3.5 text-amber-500"/>}
               </div>
               <p className="text-xs text-gray-500 mt-0.5 truncate">
-                {tutor?.name}
+                {/* Tutor name → CRM profile */}
+                {tutor ? (
+                  <button
+                    className="hover:text-forest-600 hover:underline transition-colors"
+                    onClick={() => onNavigate(`/crm/${tutor.id}`)}
+                  >
+                    {tutor.name}
+                  </button>
+                ) : "—"}
                 {dog?.breed && ` · ${dog.breed}`}
                 {apt.notes && ` · ${apt.notes}`}
               </p>
             </div>
 
-            {apt.price != null && (
-              <span className="text-sm font-bold text-forest-700 num-display flex-shrink-0">
-                R$ {apt.price.toFixed(2).replace(".",",")}
-              </span>
-            )}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {apt.price != null && (
+                <span className="text-sm font-bold text-forest-700 num-display">
+                  R$ {apt.price.toFixed(2).replace(".",",")}
+                </span>
+              )}
+              {quickAction && (
+                <button
+                  onClick={() => onNavigate(quickAction.path)}
+                  className="text-xs font-semibold text-forest-600 bg-forest-50 border border-forest-200 px-2.5 py-1 rounded-lg hover:bg-forest-100 transition-colors whitespace-nowrap"
+                >
+                  {quickAction.label} →
+                </button>
+              )}
+            </div>
           </div>
         );
       })}
@@ -358,9 +390,10 @@ function DayListView({ apts, dogs, tutors }: {
 type ServiceFilter = "todos" | "creche" | "banho" | "hotel" | "escola";
 
 export default function AgendaPage() {
-  const allDogs   = useDB(() => DogDB.list());
-  const allTutors = useDB(() => TutorDB.list());
-  const allApts   = useDB(() => AppointmentDB.list());
+  const router    = useRouter();
+  const allDogs   = useDB(() => DogDB.list(),         KEYS.dogs);
+  const allTutors = useDB(() => TutorDB.list(),       KEYS.tutors);
+  const allApts   = useDB(() => AppointmentDB.list(), KEYS.appointments);
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [showPicker,  setShowPicker]  = useState(false);
@@ -506,7 +539,7 @@ export default function AgendaPage() {
       {/* Content */}
       {viewMode === "calendar"
         ? <DayCalendarView apts={dayApts} dogs={allDogs} tutors={allTutors}/>
-        : <DayListView     apts={dayApts} dogs={allDogs} tutors={allTutors}/>
+        : <DayListView     apts={dayApts} dogs={allDogs} tutors={allTutors} onNavigate={path => router.push(path)}/>
       }
     </div>
   );

@@ -3,11 +3,12 @@
 import React, { useState } from "react";
 import {
   MessageSquare, Send, Phone, CheckCircle,
-  Plus, Search, Zap, Star, RefreshCw,
+  Plus, Search, Zap, Star, RefreshCw, Clock, Calendar, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { store } from "@/lib/store";
-import { tutors } from "@/lib/mock-data";
+import { TutorDB, DogDB, AppointmentDB, PlanDB, useDB, KEYS } from "@/lib/db";
+import { formatDate } from "@/lib/utils";
 import { Badge, Button, Card, Input, StatCard, Tabs } from "@/components/ui";
 
 const mockMessages = [
@@ -30,16 +31,56 @@ const templates = [
 ];
 
 export default function ComunicacaoPage() {
+  const tutors      = useDB(() => TutorDB.list(),        KEYS.tutors);
+  const allApts     = useDB(() => AppointmentDB.list(),  KEYS.appointments);
+  const allPlans    = useDB(() => PlanDB.list(),         KEYS.plans);
   const [tab, setTab] = useState<"conversas" | "templates" | "disparos">("conversas");
-  const [selectedTutor, setSelectedTutor] = useState<string>("tutor_1");
+  const [selectedTutor, setSelectedTutor] = useState<string>(() => {
+    const list = TutorDB.list();
+    return list[0]?.id ?? "";
+  });
+  const [chatView, setChatView] = useState<"mensagens" | "timeline">("mensagens");
   const [reply, setReply] = useState("");
   const [search, setSearch] = useState("");
-  const [, setSelectedTemplate] = useState<string | null>(null);
+  const [tplPickerOpen, setTplPickerOpen] = useState(false);
   const [disparo, setDisparo] = useState({ template: "renovacao", segmento: "plano_vencendo" });
 
-  const tutor = tutors.find(t => t.id === selectedTutor);
-  const convMsgs = mockMessages.filter(m => m.tutorId === selectedTutor);
+  const tutor     = tutors.find(t => t.id === selectedTutor);
+  const tutorDogs = DogDB.list().filter(d => d.tutorId === selectedTutor);
+  const dogName   = tutorDogs[0]?.name ?? "seu cão";
+
+  // Timeline: real appointments for selected tutor, most recent first
+  const tutorApts = allApts
+    .filter(a => a.tutorId === selectedTutor)
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  // Auto-messages: derive from appointment events
+  const autoMessages = tutorApts
+    .filter(a => a.status === "concluido" || a.checkinTime)
+    .slice(0, 3)
+    .map(a => {
+      const tpl = a.status === "concluido"
+        ? templates.find(t => t.id === "checkout")
+        : templates.find(t => t.id === "checkin");
+      return {
+        id: `auto_${a.id}`,
+        tutorId: a.tutorId,
+        text: (tpl?.text ?? "").replace("{nome}", DogDB.get(a.dogId)?.name ?? dogName),
+        time: a.checkoutTime ? `${a.date}T${a.checkoutTime}` : `${a.date}T${a.checkinTime ?? a.startTime}`,
+        from: "sistema" as const,
+        read: true,
+        auto: true,
+      };
+    });
+
+  const convMsgs = [
+    ...mockMessages.filter(m => m.tutorId === selectedTutor),
+    ...autoMessages,
+  ].sort((a, b) => a.time.localeCompare(b.time));
   const unreadCount = mockMessages.filter(m => !m.read).length;
+
+  // Active plans for this tutor
+  const tutorPlans = allPlans.filter(p => p.tutorId === selectedTutor && p.status === "ativo");
 
   const sendReply = () => {
     if (!reply.trim()) return;
@@ -48,8 +89,10 @@ export default function ComunicacaoPage() {
   };
 
   const sendTemplate = (tpl: typeof templates[0]) => {
-    store.toast("success", `"${tpl.label}" enviado para ${tutor?.name}!`);
-    setSelectedTemplate(null);
+    const filled = tpl.text.replace("{nome}", dogName);
+    setReply(filled);
+    setTplPickerOpen(false);
+    store.toast("info", `Template carregado. Revise e envie.`);
   };
 
   const sendDisparo = () => {
@@ -127,7 +170,7 @@ export default function ComunicacaoPage() {
           </div>
 
           {/* Chat */}
-          <div className="xl:col-span-2 flex flex-col bg-white rounded-lg border border-gray-200 shadow-card overflow-hidden">
+          <div className="xl:col-span-2 flex flex-col bg-white rounded-lg border border-gray-200 shadow-card overflow-hidden relative">
             {/* Header */}
             <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-100">
               <div className="w-9 h-9 rounded-full bg-forest-100 flex items-center justify-center flex-shrink-0">
@@ -140,49 +183,148 @@ export default function ComunicacaoPage() {
                 </p>
               </div>
               <div className="ml-auto flex items-center gap-2">
+                {/* View toggle */}
+                <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5">
+                  <button onClick={() => setChatView("mensagens")}
+                    className={cn("px-2.5 py-1 rounded-md text-xs font-semibold transition-all",
+                      chatView === "mensagens" ? "bg-white shadow text-gray-800" : "text-gray-500 hover:text-gray-700")}>
+                    <MessageSquare className="w-3 h-3 inline mr-1"/>Msgs
+                  </button>
+                  <button onClick={() => setChatView("timeline")}
+                    className={cn("px-2.5 py-1 rounded-md text-xs font-semibold transition-all",
+                      chatView === "timeline" ? "bg-white shadow text-gray-800" : "text-gray-500 hover:text-gray-700")}>
+                    <Calendar className="w-3 h-3 inline mr-1"/>Timeline
+                  </button>
+                </div>
                 <Button size="xs" variant="outline" icon={<Phone className="w-3 h-3" />}
                   onClick={() => store.toast("info", `Ligando para ${tutor?.name}...`)}>Ligar</Button>
                 <Button size="xs" variant="secondary" icon={<Zap className="w-3 h-3" />}
-                  onClick={() => setSelectedTemplate("template")}>Template</Button>
+                  onClick={() => setTplPickerOpen(p => !p)}>Template</Button>
               </div>
             </div>
 
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
-              {convMsgs.length === 0 && (
-                <div className="flex flex-col items-center gap-2 py-10 text-gray-400">
-                  <MessageSquare className="w-10 h-10 opacity-20" />
-                  <p className="text-sm">Nenhuma mensagem ainda</p>
+            {/* Template picker overlay */}
+            {tplPickerOpen && (
+              <div className="absolute top-14 right-3 z-20 bg-white border border-gray-200 shadow-xl rounded-xl w-72 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">Escolher template</p>
+                  <button onClick={() => setTplPickerOpen(false)}><X className="w-3.5 h-3.5 text-gray-400"/></button>
                 </div>
-              )}
-              {convMsgs.map(msg => (
-                <div key={msg.id} className={cn("flex", msg.from === "sistema" ? "justify-end" : "justify-start")}>
-                  <div className={cn("max-w-xs px-4 py-2.5 rounded-2xl text-sm",
-                    msg.from === "sistema"
-                      ? "bg-forest-600 text-white rounded-br-sm"
-                      : "bg-white border border-gray-200 text-gray-800 rounded-bl-sm shadow-card"
-                  )}>
-                    <p>{msg.text}</p>
-                    <p className={cn("text-2xs mt-1", msg.from === "sistema" ? "text-forest-200" : "text-gray-400")}>
-                      {new Date(msg.time).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
-                    </p>
-                  </div>
+                <div className="space-y-1 max-h-60 overflow-y-auto">
+                  {templates.map(tpl => (
+                    <button key={tpl.id} onClick={() => sendTemplate(tpl)}
+                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-forest-50 transition-colors">
+                      <span className="mr-2">{tpl.emoji}</span>
+                      <span className="text-sm font-medium text-gray-800">{tpl.label}</span>
+                      <p className="text-2xs text-gray-400 mt-0.5 line-clamp-1 pl-6">{tpl.text.replace("{nome}", dogName)}</p>
+                    </button>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </div>
+            )}
 
-            {/* Reply box */}
-            <div className="p-3 border-t border-gray-100 flex items-center gap-2">
-              <input
-                value={reply} onChange={e => setReply(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && sendReply()}
-                placeholder="Digite a mensagem..."
-                className="flex-1 h-9 rounded-lg border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-forest-500/20 focus:border-forest-500"
-              />
-              <Button size="sm" icon={<Send className="w-3.5 h-3.5" />} onClick={sendReply}>
-                Enviar
-              </Button>
-            </div>
+            {/* Messages view */}
+            {chatView === "mensagens" && (
+              <>
+                <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
+                  {convMsgs.length === 0 && (
+                    <div className="flex flex-col items-center gap-2 py-10 text-gray-400">
+                      <MessageSquare className="w-10 h-10 opacity-20" />
+                      <p className="text-sm">Nenhuma mensagem ainda</p>
+                    </div>
+                  )}
+                  {convMsgs.map(msg => (
+                    <div key={msg.id} className={cn("flex", msg.from === "sistema" ? "justify-end" : "justify-start")}>
+                      <div className={cn("max-w-xs px-4 py-2.5 rounded-2xl text-sm",
+                        msg.from === "sistema"
+                          ? "bg-forest-600 text-white rounded-br-sm"
+                          : "bg-white border border-gray-200 text-gray-800 rounded-bl-sm shadow-card"
+                      )}>
+                        {!!(msg as { auto?: boolean }).auto && (
+                          <p className="text-2xs opacity-60 mb-1 flex items-center gap-1"><Zap className="w-2.5 h-2.5"/>Auto</p>
+                        )}
+                        <p>{msg.text}</p>
+                        <p className={cn("text-2xs mt-1", msg.from === "sistema" ? "text-forest-200" : "text-gray-400")}>
+                          {new Date(msg.time).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="p-3 border-t border-gray-100 flex items-center gap-2">
+                  <input
+                    value={reply} onChange={e => setReply(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && sendReply()}
+                    placeholder="Digite a mensagem..."
+                    className="flex-1 h-9 rounded-lg border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-forest-500/20 focus:border-forest-500"
+                  />
+                  <Button size="sm" icon={<Send className="w-3.5 h-3.5" />} onClick={sendReply}>
+                    Enviar
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {/* Timeline view */}
+            {chatView === "timeline" && (
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {/* Active plans strip */}
+                {tutorPlans.length > 0 && (
+                  <div className="bg-forest-50 border border-forest-100 rounded-xl px-4 py-3 flex items-center gap-3">
+                    <CheckCircle className="w-4 h-4 text-forest-600 flex-shrink-0"/>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-forest-800">{tutorPlans.length} plano{tutorPlans.length !== 1 ? "s" : ""} ativo{tutorPlans.length !== 1 ? "s" : ""}</p>
+                      <p className="text-2xs text-forest-600 truncate">{tutorPlans.map(p => p.name).join(" · ")}</p>
+                    </div>
+                  </div>
+                )}
+
+                {tutorApts.length === 0 ? (
+                  <div className="flex flex-col items-center gap-2 py-12 text-gray-400">
+                    <Calendar className="w-10 h-10 opacity-20"/>
+                    <p className="text-sm">Nenhum agendamento registrado</p>
+                  </div>
+                ) : (
+                  tutorApts.map(apt => {
+                    const dog = DogDB.get(apt.dogId);
+                    const statusCls: Record<string, string> = {
+                      concluido:    "bg-green-100 text-green-700",
+                      cancelado:    "bg-red-100 text-red-700",
+                      no_show:      "bg-red-50 text-red-500",
+                      em_andamento: "bg-blue-100 text-blue-700",
+                      agendado:     "bg-gray-100 text-gray-600",
+                    };
+                    const SERVICE_PT: Record<string, string> = {
+                      creche: "Creche", escola: "Escola", hotel: "Hotel",
+                      banho: "Banho", tosa: "Tosa", banho_tosa: "Banho + Tosa", avulso: "Avulso",
+                    };
+                    return (
+                      <div key={apt.id} className="flex items-start gap-3">
+                        <div className="flex flex-col items-center gap-1 mt-1 flex-shrink-0">
+                          <div className={cn("w-2 h-2 rounded-full", apt.status === "concluido" ? "bg-green-400" : apt.status === "cancelado" ? "bg-red-400" : "bg-gray-300")}/>
+                          <div className="w-px flex-1 min-h-[20px] bg-gray-100"/>
+                        </div>
+                        <div className="flex-1 pb-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-xs font-bold text-gray-800">
+                              {formatDate(apt.date, "dd/MM/yy")} — {SERVICE_PT[apt.serviceType] ?? apt.serviceType}
+                            </p>
+                            <span className={cn("text-2xs px-1.5 py-0.5 rounded-full font-semibold", statusCls[apt.status] ?? "bg-gray-100 text-gray-500")}>
+                              {apt.status}
+                            </span>
+                          </div>
+                          <p className="text-2xs text-gray-400 mt-0.5">
+                            {dog?.name ?? "—"} · {apt.startTime}{apt.checkinTime ? ` · check-in ${apt.checkinTime}` : ""}
+                            {apt.checkoutTime ? ` · saída ${apt.checkoutTime}` : ""}
+                          </p>
+                          {apt.notes && <p className="text-2xs text-gray-400 italic mt-0.5">"{apt.notes}"</p>}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

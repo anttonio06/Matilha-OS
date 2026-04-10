@@ -3,11 +3,11 @@
 import React, { useState } from "react";
 import {
   CreditCard, Plus, Search, AlertTriangle, CheckCircle,
-  Clock, Zap, Trash2, Edit2, X, Save,
+  Clock, Zap, Trash2, Edit2, X, Save, History, ArrowUpCircle, RefreshCw,
 } from "lucide-react";
 import { store } from "@/lib/store";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
-import { useDB, DogDB, TutorDB, PlanDB } from "@/lib/db";
+import { useDB, DogDB, TutorDB, PlanDB, AppointmentDB, KEYS } from "@/lib/db";
 import { Button, Input, Progress } from "@/components/ui";
 import type { Plan } from "@/types";
 
@@ -347,9 +347,162 @@ function TemplateCard({
   );
 }
 
+// ─── Plan Details Modal ───────────────────────────────────────────────────────
+
+function PlanDetailsModal({ plan, onClose }: { plan: Plan; onClose: () => void }) {
+  const dog         = DogDB.get(plan.dogId);
+  const tutor       = plan.tutorId ? TutorDB.get(plan.tutorId) : null;
+  const allApts     = useDB(() => AppointmentDB.list(), KEYS.appointments);
+  const history     = allApts
+    .filter(a => a.planId === plan.id)
+    .sort((a, b) => (b.date + b.startTime).localeCompare(a.date + a.startTime));
+
+  const used      = plan.usedUses ?? 0;
+  const total     = plan.totalUses ?? 0;
+  const remaining = total - used;
+  const isLow     = total > 0 && remaining <= 3;
+
+  const SERVICE_LABELS: Record<string, string> = {
+    creche: "Creche", escola: "Escola", hotel: "Hotel",
+    banho: "Banho", tosa: "Tosa", avulso: "Avulso", combo: "Combo",
+  };
+
+  const renew = () => {
+    const newStart = plan.validUntil ?? new Date().toISOString().split("T")[0];
+    const newEnd   = new Date(new Date(newStart).getTime() + 30 * 86_400_000).toISOString().split("T")[0];
+    PlanDB.create({
+      name:             plan.name,
+      category:         plan.category,
+      totalUses:        plan.totalUses,
+      usedUses:         0,
+      validFrom:        newStart,
+      validUntil:       newEnd,
+      price:            plan.price,
+      recurrent:        plan.recurrent,
+      status:           "ativo",
+      tutorId:          plan.tutorId ?? "",
+      dogId:            plan.dogId,
+      includedServices: plan.includedServices,
+      notes:            plan.notes,
+    });
+    PlanDB.update(plan.id, { status: "expirado" });
+    store.toast("success", "Plano renovado com sucesso!");
+    onClose();
+  };
+
+  const upgrade = () => {
+    store.openModal("novo_plano", { dogId: plan.dogId, tutorId: plan.tutorId });
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose}/>
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-start justify-between p-6 pb-4 border-b border-gray-100">
+          <div>
+            <h2 className="text-base font-bold text-gray-900">{plan.name}</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {dog?.name ?? "—"} · {tutor?.name ?? "—"} · <span className="capitalize">{plan.category}</span>
+            </p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 ml-2">
+            <X className="w-4 h-4 text-gray-400"/>
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 p-6 space-y-5">
+          {/* Stats row */}
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label:"Valor", value: formatCurrency(plan.price) },
+              { label:"Início", value: formatDate(plan.validFrom, "dd/MM/yy") },
+              { label:"Vencimento", value: formatDate(plan.validUntil, "dd/MM/yy") },
+            ].map(s => (
+              <div key={s.label} className="bg-gray-50 rounded-xl p-3 text-center">
+                <p className="text-2xs text-gray-400 font-semibold uppercase tracking-wide mb-1">{s.label}</p>
+                <p className="text-sm font-bold text-gray-800 num-display">{s.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Consumption */}
+          {total > 0 && (
+            <div className="bg-gray-50 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-gray-600">Usos consumidos</p>
+                <span className={cn("text-xs font-bold num-display", isLow ? "text-amber-600" : "text-gray-700")}>
+                  {used} / {total}
+                </span>
+              </div>
+              <Progress value={used} max={total} color={isLow ? "amber" : "green"} size="md"/>
+              {isLow && (
+                <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3"/> {remaining} uso{remaining !== 1 ? "s" : ""} restante{remaining !== 1 ? "s" : ""}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* History */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <History className="w-4 h-4 text-gray-400"/>
+              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Histórico de uso</p>
+              <span className="text-2xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-bold">{history.length}</span>
+            </div>
+            {history.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-6">Nenhum uso registrado ainda.</p>
+            ) : (
+              <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                {history.map(apt => (
+                  <div key={apt.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2.5">
+                    <div>
+                      <p className="text-xs font-semibold text-gray-800">
+                        {formatDate(apt.date, "dd/MM/yy")} — {SERVICE_LABELS[apt.serviceType] ?? apt.serviceType}
+                      </p>
+                      <p className="text-2xs text-gray-400">{apt.startTime} · {apt.status}</p>
+                    </div>
+                    <span className={cn(
+                      "text-2xs px-2 py-0.5 rounded-full font-semibold",
+                      apt.status === "concluido"
+                        ? "bg-green-100 text-green-700"
+                        : apt.status === "cancelado"
+                        ? "bg-red-100 text-red-700"
+                        : "bg-gray-100 text-gray-600"
+                    )}>
+                      {apt.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="p-6 pt-4 border-t border-gray-100 flex gap-2">
+          <button
+            onClick={renew}
+            className="flex-1 py-2.5 rounded-xl bg-forest-600 text-white text-sm font-semibold hover:bg-forest-700 flex items-center justify-center gap-2">
+            <RefreshCw className="w-4 h-4"/> Renovar plano
+          </button>
+          <button
+            onClick={upgrade}
+            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50 flex items-center justify-center gap-2">
+            <ArrowUpCircle className="w-4 h-4 text-forest-600"/> Upgrade / Novo plano
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Active Plan Card ─────────────────────────────────────────────────────────
 
 function ActivePlanCard({ plan }: { plan: Plan }) {
+  const [showDetails, setShowDetails] = useState(false);
   const dogs   = useDB(() => DogDB.list());
   const tutors = useDB(() => TutorDB.list());
   const dog    = dogs.find(d => d.id === plan.dogId);
@@ -370,6 +523,7 @@ function ActivePlanCard({ plan }: { plan: Plan }) {
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-3 hover:shadow-md transition-shadow">
+      {showDetails && <PlanDetailsModal plan={plan} onClose={() => setShowDetails(false)}/>}
       <div className="flex items-start gap-3">
         <div className="w-9 h-9 rounded-full bg-forest-100 flex items-center justify-center flex-shrink-0">
           <span className="font-bold text-forest-700 text-sm">{dog?.name[0] ?? "?"}</span>
@@ -412,7 +566,7 @@ function ActivePlanCard({ plan }: { plan: Plan }) {
       </div>
 
       <div className="flex gap-2">
-        <Button size="xs" variant="secondary" className="flex-1">Detalhes</Button>
+        <Button size="xs" variant="secondary" className="flex-1" onClick={() => setShowDetails(true)}>Detalhes</Button>
         <Button size="xs" variant="outline" className="flex-1"
           onClick={() => { PlanDB.update(plan.id, { status: plan.status === "ativo" ? "pausado" : "ativo" }); }}>
           {plan.status === "ativo" ? "Pausar" : "Ativar"}

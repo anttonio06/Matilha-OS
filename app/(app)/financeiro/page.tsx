@@ -13,9 +13,9 @@ import {
 } from "recharts";
 import { store } from "@/lib/store";
 import { cn, formatCurrency, formatDate, percentage } from "@/lib/utils";
-import { transactions, revenueChartData, tutorById } from "@/lib/mock-data";
+import { TransactionDB, TutorDB, useDB, KEYS } from "@/lib/db";
+import { computeRevenueChartData } from "@/lib/services/metrics.service";
 import { Badge, Button, Card, Input, Progress, StatCard, Tabs } from "@/components/ui";
-import { TutorDB } from "@/lib/db";
 
 // ─── Asaas helpers ────────────────────────────────────────────────────────────
 
@@ -70,8 +70,10 @@ const totalRevenue = dreData.reduce((s, d) => s + d.revenue, 0);
 
 // ─── Transaction Row ──────────────────────────────────────────────────────────
 
-function TxRow({ tx }: { tx: typeof transactions[0] }) {
-  const tutor = tx.tutorId ? tutorById(tx.tutorId) : null;
+import type { Transaction } from "@/types";
+
+function TxRow({ tx }: { tx: Transaction }) {
+  const tutor = tx.tutorId ? TutorDB.get(tx.tutorId) : null;
   const isIncome = tx.type === "receita";
   const methodIcons: Record<string, React.ReactNode> = {
     pix:           <Smartphone className="w-3.5 h-3.5 text-forest-500" />,
@@ -564,6 +566,8 @@ function TabCobracas() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function FinanceiroPage() {
+  const transactions     = useDB(() => TransactionDB.list(), KEYS.transactions);
+  const revenueChartData = computeRevenueChartData();
   const [tab, setTab] = useState<"visao_geral" | "transacoes" | "dre" | "cobracas">("visao_geral");
   const [search, setSearch] = useState("");
 
@@ -694,7 +698,7 @@ export default function FinanceiroPage() {
             </div>
             <div className="divide-y divide-gray-50">
               {transactions.filter(t => t.status !== "pago" && t.status !== "cancelado").map((tx) => {
-                const tutor = tx.tutorId ? tutorById(tx.tutorId) : null;
+                const tutor = tx.tutorId ? TutorDB.get(tx.tutorId) : null;
                 return (
                   <div key={tx.id} className="px-5 py-3 flex items-center gap-3">
                     <div className={cn("w-2 h-2 rounded-full flex-shrink-0", tx.status === "atrasado" ? "bg-red-500" : "bg-amber-500")} />

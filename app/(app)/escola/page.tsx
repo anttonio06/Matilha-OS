@@ -7,12 +7,11 @@ import {
 } from "lucide-react";
 import { store } from "@/lib/store";
 import { cn, formatDate } from "@/lib/utils";
-import { dogs, team, dogById, tutorById } from "@/lib/mock-data";
+import { DogDB, TutorDB, TeamDB, useDB, KEYS } from "@/lib/db";
 import type { BehaviorProfile } from "@/types";
-const behaviorProfiles: BehaviorProfile[] = [];
 import { Button, Card, Progress, StatCard, Tabs } from "@/components/ui";
 
-const trainers = team.filter(t => t.role === "treinador");
+const behaviorProfiles: BehaviorProfile[] = [];
 
 const adaptationPhaseConfig = {
   inicial:   { label: "Inicial",   color: "bg-gray-100 text-gray-600",    pct: 20 },
@@ -22,8 +21,8 @@ const adaptationPhaseConfig = {
 };
 
 function BehaviorCard({ profile }: { profile: typeof behaviorProfiles[0] }) {
-  const dog   = dogById(profile.dogId);
-  const tutor = dog ? tutorById(dogs.find(d => d.id === dog.id)?.tutorId ?? "") : null;
+  const dog   = DogDB.get(profile.dogId);
+  const tutor = dog ? TutorDB.get(dog.tutorId) : null;
   const phase = profile.adaptationPhase ? adaptationPhaseConfig[profile.adaptationPhase] : null;
   const [expanded, setExpanded] = useState(false);
 
@@ -123,6 +122,8 @@ function BehaviorCard({ profile }: { profile: typeof behaviorProfiles[0] }) {
 }
 
 export default function EscolaPage() {
+  const team     = useDB(() => TeamDB.list(), KEYS.team);
+  const trainers = team.filter(t => t.role === "treinador");
   const [tab, setTab] = useState<"perfis" | "sessoes" | "protocolos">("perfis");
 
   return (

@@ -8,14 +8,8 @@ import {
 } from "lucide-react";
 import { store } from "@/lib/store";
 import { cn, formatCurrency } from "@/lib/utils";
-import { todayAppointments, dogById, tutorById, team, planById } from "@/lib/mock-data";
+import { AppointmentDB, DogDB, TutorDB, PlanDB, TeamDB, useDB, KEYS } from "@/lib/db";
 import { Badge, Button, Card, Progress, StatCard, Tabs } from "@/components/ui";
-
-const bathApts = todayAppointments.filter(a =>
-  a.serviceType === "banho" || a.serviceType === "tosa" || a.serviceType === "banho_tosa"
-);
-
-const groomers = team.filter(t => t.role === "banhista");
 
 type BathStatus = "aguardando" | "em_banho" | "secagem" | "tosa" | "finalizado" | "aguardando_retirada";
 
@@ -28,10 +22,12 @@ const workflowSteps: { id: BathStatus; label: string; color: string }[] = [
   { id: "aguardando_retirada",label: "Aguardando ret.",color: "bg-green-100 text-green-700" },
 ];
 
-function BathCard({ apt, mockStatus }: { apt: typeof bathApts[0]; mockStatus: BathStatus }) {
-  const dog   = dogById(apt.dogId);
-  const tutor = tutorById(apt.tutorId);
-  const plan  = apt.planId ? planById(apt.planId) : null;
+import type { Appointment } from "@/types";
+
+function BathCard({ apt, mockStatus }: { apt: Appointment; mockStatus: BathStatus }) {
+  const dog   = DogDB.get(apt.dogId);
+  const tutor = TutorDB.get(apt.tutorId);
+  const plan  = apt.planId ? PlanDB.get(apt.planId) : null;
   const [status, setStatus] = useState<BathStatus>(mockStatus);
   const step = workflowSteps.find(s => s.id === status)!;
 
@@ -140,11 +136,18 @@ function BathCard({ apt, mockStatus }: { apt: typeof bathApts[0]; mockStatus: Ba
 }
 
 export default function BanhoTosaPage() {
+  const allApts  = useDB(() => AppointmentDB.today(), KEYS.appointments);
+  const team     = useDB(() => TeamDB.list(),         KEYS.team);
+  const bathApts = allApts.filter(a =>
+    a.serviceType === "banho" || a.serviceType === "tosa" || a.serviceType === "banho_tosa"
+  );
+  const groomers = team.filter(t => t.role === "banhista");
+
   const [tab, setTab] = useState<"operacao" | "agenda" | "eficiencia">("operacao");
 
   const mockStatuses: BathStatus[] = ["em_banho", "secagem", "aguardando", "aguardando_retirada"];
 
-  const completed = bathApts.filter((_, i) => mockStatuses[i % mockStatuses.length] === "aguardando_retirada").length;
+  const completed  = bathApts.filter((_, i) => mockStatuses[i % mockStatuses.length] === "aguardando_retirada").length;
   const inProgress = bathApts.filter((_, i) => ["em_banho","secagem","tosa"].includes(mockStatuses[i % mockStatuses.length])).length;
 
   return (
@@ -214,7 +217,7 @@ export default function BanhoTosaPage() {
                 </div>
                 <div className="divide-y divide-gray-50">
                   {groomerApts.map((apt) => {
-                    const dog = dogById(apt.dogId);
+                    const dog = DogDB.get(apt.dogId);
                     return (
                       <div key={apt.id} className="flex items-center gap-3 px-5 py-3">
                         <div className="text-xs text-gray-400 w-10 num-display">{apt.startTime}</div>

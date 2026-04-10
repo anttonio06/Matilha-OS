@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { store } from "@/lib/store";
 import { cn, formatCurrency } from "@/lib/utils";
-import { products, tutors, alerts } from "@/lib/mock-data";
+import { ProductDB, TutorDB, AlertDB, useDB, KEYS } from "@/lib/db";
 import { Badge, Button, Card, Input, StatCard, Tabs } from "@/components/ui";
 import type { Product } from "@/types";
 
@@ -55,6 +55,9 @@ function ProductCard({ product, onAdd }: { product: Product; onAdd: (p: Product)
 }
 
 export default function LojaPage() {
+  const products = useDB(() => ProductDB.list(), KEYS.products);
+  const tutors   = useDB(() => TutorDB.list(),   KEYS.tutors);
+  const alerts   = useDB(() => AlertDB.active(),  KEYS.alerts);
   const [tab,        setTab]    = useState<"pdv" | "estoque" | "upsell">("pdv");
   const [search,     setSearch] = useState("");
   const [catFilter,  setCat]    = useState("todos");

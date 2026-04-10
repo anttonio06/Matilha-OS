@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { Search, Bell, Plus, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { alerts } from "@/lib/mock-data";
+import { AlertDB, useDB, KEYS } from "@/lib/db";
 import { store } from "@/lib/store";
 import { CommandPalette } from "./CommandPalette";
 
@@ -18,6 +18,7 @@ export function Topbar({ title, breadcrumbs, actions }: TopbarProps) {
   const [notifOpen,  setNotifOpen]  = useState(false);
   const [readAll,    setReadAll]    = useState(false);
 
+  const alerts = useDB(() => AlertDB.active(), KEYS.alerts);
   const unread = readAll ? 0 : alerts.filter((a) => !a.readAt).length;
 
   return (
